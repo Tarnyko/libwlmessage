@@ -1093,10 +1093,14 @@ wlmessage_destroy (struct wlmessage *wlmessage)
 		cairo_surface_destroy (message_window->surface);
 	if (message_window->icon)
 		cairo_surface_destroy (message_window->icon);
-	widget_destroy (message_window->widget);
-	window_destroy (message_window->window);
-	free (message_window->title);
-	free (message_window->message);
+	if (message_window->widget)
+		widget_destroy (message_window->widget);
+	if (message_window->window)
+		window_destroy (message_window->window);
+	if (message_window->title)
+		free (message_window->title);
+	if (message_window->message)
+		free (message_window->message);
 	free (message_window);
 
 	free (wlmessage);
