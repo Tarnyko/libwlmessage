@@ -776,11 +776,11 @@ wlmessage_set_noresize (struct wlmessage *wlmessage, unsigned int not_resizable)
 	message_window->resizable = !not_resizable;
 }
 
-unsigned
+unsigned int
 wlmessage_get_noresize (struct wlmessage *wlmessage)
 {
 	if (!wlmessage)
-		return;
+		return 0;
 
 	struct message_window *message_window = wlmessage->message_window;
 
@@ -880,7 +880,7 @@ wlmessage_set_message_file (struct wlmessage *wlmessage, char *file_path)
 }
 
 void
-wlmessage_add_button (struct wlmessage *wlmessage, int index, char *caption)
+wlmessage_add_button (struct wlmessage *wlmessage, unsigned int index, char *caption)
 {
 	if ((!wlmessage) || (!caption))
 		return;
@@ -898,7 +898,7 @@ wlmessage_add_button (struct wlmessage *wlmessage, int index, char *caption)
 }
 
 void
-wlmessage_delete_button (struct wlmessage *wlmessage, int index)
+wlmessage_delete_button (struct wlmessage *wlmessage, unsigned int index)
 {
 	if (!wlmessage)
 		return;
@@ -918,7 +918,7 @@ wlmessage_delete_button (struct wlmessage *wlmessage, int index)
 }
 
 void
-wlmessage_set_default_button (struct wlmessage *wlmessage, int index)
+wlmessage_set_default_button (struct wlmessage *wlmessage, unsigned int index)
 {
 	if (!wlmessage)
 		return;
@@ -1000,7 +1000,7 @@ wlmessage_show (struct wlmessage *wlmessage, char **input_text)
 	wlmessage->display = display_create (NULL, NULL);
 	if (!wlmessage->display) {
 		fprintf (stderr, "Failed to connect to a Wayland compositor !\n");
-		return -1;	/* HUH ? */
+		return -1;
 	}
 
 	if (wlmessage->timeout)

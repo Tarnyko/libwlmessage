@@ -44,13 +44,13 @@ void
 wlmessage_set_message_file (struct wlmessage *wlmessage, char *file_path);
 
 void
-wlmessage_add_button (struct wlmessage *wlmessage, int index, char *caption);
+wlmessage_add_button (struct wlmessage *wlmessage, unsigned int index, char *caption);
 
 void
-wlmessage_delete_button (struct wlmessage *wlmessage, int index);
+wlmessage_delete_button (struct wlmessage *wlmessage, unsigned int index);
 
 void
-wlmessage_set_default_button (struct wlmessage *wlmessage, int index);
+wlmessage_set_default_button (struct wlmessage *wlmessage, unsigned int index);
 
 void
 wlmessage_set_textfield (struct wlmessage *wlmessage, char *default_text);
