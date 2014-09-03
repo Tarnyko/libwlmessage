@@ -1,3 +1,4 @@
+%bcond_with x
 %bcond_with wayland
 
 Name:           libwlmessage
@@ -16,10 +17,17 @@ BuildRequires:  libjpeg-devel
 BuildRequires:  xz
 BuildRequires:  pkgconfig
 BuildRequires:  pkgconfig(libpng)
+%if %{with x}
+BuildRequires:  pkgconfig(x11)
+BuildRequires:  pkgconfig(xt)
+BuildRequires:  pkgconfig(xaw7)
+%endif
+%if %{with wayland}
 BuildRequires:  pkgconfig(xkbcommon)
 BuildRequires:  pkgconfig(wayland-client)
 BuildRequires:  pkgconfig(wayland-cursor)
 BuildRequires:  pkgconfig(wayland-egl)
+%endif
 BuildRequires:  pkgconfig(egl)
 BuildRequires:  pkgconfig(glesv2)
 BuildRequires:  pkgconfig(pixman-1)
@@ -28,10 +36,6 @@ BuildRequires:  pkgconfig(cairo-egl)
 BuildRequires:  pkgconfig(cairo-glesv2)
 BuildRequires:  pkgconfig(glib-2.0)
 BuildRequires:  pkgconfig(gio-2.0)
-
-%if !%{with wayland}
-ExclusiveArch:
-%endif
 
 %description
 libwlmessage is a very tiny and toolkit-independent library, able to display interactive dialog boxes under Wayland.
@@ -49,7 +53,13 @@ Development files for %{name}
 cp %{SOURCE1} .
 
 %build
-%reconfigure --enable-xdg-shell
+%reconfigure \
+%if %{with x}
+ --enable-x11 --disable-wayland
+%else
+ --disable-x11 --enable-wayland --enable-xdg-shell
+%endif
+
 make %{?_smp_mflags}
 
 %install
