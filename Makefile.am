@@ -17,8 +17,16 @@ lib_LTLIBRARIES = libwlmessage.la
 
 include_HEADERS = libwlmessage.h
 
-libwlmessage_la_SOURCES =					\
-	libwlmessage.c					\
+libwlmessage_la_SOURCES =
+
+if ENABLE_X11
+libwlmessage_la_SOURCES +=				\
+	libwlmessage-x11.c
+endif
+
+if ENABLE_WAYLAND
+libwlmessage_la_SOURCES +=				\
+	libwlmessage-wl.c				\
 	toytoolkit/shared/frame.c			\
 	toytoolkit/shared/image-loader.c		\
 	toytoolkit/shared/cairo-util.c			\
@@ -28,6 +36,7 @@ libwlmessage_la_SOURCES =					\
 	toytoolkit/text-protocol.c			\
 	toytoolkit/workspaces-protocol.c		\
 	toytoolkit/window.c
+endif
 
 libwlmessage_la_LDFLAGS = -export-dynamic
 libwlmessage_la_CPPFLAGS = $(AM_CPPFLAGS) -Wno-unused-result
