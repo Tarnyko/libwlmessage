@@ -16,6 +16,7 @@
 
 #include "libwlmessage.h"
 #define MAX_LINES 6
+#define MAX_BUTTONS 3
 
 
 struct message_window {
@@ -28,9 +29,17 @@ struct message_window {
 	int resizable;
 	cairo_surface_t *icon;
 	int buttons_nb;
-	//struct wl_list button_list;
+	struct button *button_list[MAX_BUTTONS];
 
 	struct wlmessage *wlmessage;
+};
+
+struct button {
+	Widget button;
+
+	char *caption;
+	int value;
+	struct message_window *message_window;
 };
 
 struct wlmessage {
@@ -45,13 +54,37 @@ struct widget_map {
 	cairo_surface_t *icon;
 	Widget label;
 	Widget entry;
-	Widget button;
+	Widget form_b;
+	struct button **button_list;
+	int buttons_nb;
 	int lines_nb;
 };
 
  /* ---------------------------------------- */
 
- /* -- HELPER FUNCTIONS -- */
+ /* -- HELPER FUNCTIONS AND STRUCTURES -- */
+
+#define _MOTIF_WM_HINTS_FUNCTIONS   (1L << 0)
+#define _MOTIF_WM_HINTS_DECORATIONS (1L << 1)
+
+#define _MOTIF_WM_FUNC_ALL      (1L << 0)
+#define _MOTIF_WM_FUNC_RESIZE   (1L << 1)
+#define _MOTIF_WM_FUNC_MOVE     (1L << 2)
+#define _MOTIF_WM_FUNC_MINIMIZE (1L << 3)
+#define _MOTIF_WM_FUNC_MAXIMIZE (1L << 4)
+#define _MOTIF_WM_FUNC_CLOSE    (1L << 5)
+
+#define _MOTIF_WM_DECOR_ALL      (1L << 0)
+#define _MOTIF_WM_DECOR_MINIMIZE (1L << 5)
+#define _MOTIF_WM_DECOR_MAXIMIZE (1L << 6)
+
+typedef struct {
+	unsigned int flags;
+	unsigned int functions;
+	unsigned int decorations;
+	int inputMode;
+	unsigned int status;
+} WMHints;
 
 void *
 xzalloc(size_t size)
@@ -110,9 +143,11 @@ get_lines (char *text)
 void
 bt_on_validate (Widget widget, XtPointer data, XtPointer callback_data)
 {
-	//button->message_window->wlmessage->return_value = button->value;
+	struct button *button = (struct button *) data;
 
-	//exit (0);
+	button->message_window->wlmessage->return_value = button->value;
+
+	XtAppSetExitFlag (button->message_window->wlmessage->app);
 }
 
 static void
@@ -151,6 +186,7 @@ resize_handler (Widget widget, XtPointer data, XEvent *event, Boolean *d)
 	Widget form = widget;
 	struct widget_map *map = (struct widget_map *)data;
 	short width, height;
+	int i;
 
 	if (event->type == ConfigureNotify) {
 		XtConfigureWidget (map->label, (event->xconfigure.width - (event->xconfigure.width-100)) / 2,
@@ -164,11 +200,18 @@ resize_handler (Widget widget, XtPointer data, XEvent *event, Boolean *d)
 			                               event->xconfigure.width - 150,
 			                               20,
 			                               1);
-		XtConfigureWidget (map->button, (event->xconfigure.width - 80) /2,
-		                                event->xconfigure.height - 50,
-		                                80, 30,
-		                                1);
+		XtConfigureWidget (map->form_b, (event->xconfigure.width - (event->xconfigure.width-200)) / 2,
+		                                 event->xconfigure.height - 55,
+		                                 event->xconfigure.width - 200, 50,
+		                                 1);
+		for (i = 0; i < map->buttons_nb; i++) {
+			XtConfigureWidget (map->button_list[i]->button, ((event->xconfigure.width - 200) /(map->buttons_nb*80)) + i*80 + (i+1)*10,
+		        	                        10,
+			                                80, 30,
+			                                1);
+		}
 
+		 /* force redraw */
 		event->type = Expose;
 	}
 
@@ -185,41 +228,32 @@ resize_handler (Widget widget, XtPointer data, XEvent *event, Boolean *d)
 	}
 }
 
-#if 0
 static void
-key_handler (struct window *window, struct input *input, uint32_t time,
-		 uint32_t key, uint32_t sym, enum wl_keyboard_key_state state,
-		 void *data)
+key_handler (Widget widget, XtPointer data, XEvent *event, Boolean *d)
 {
-	struct message_window *message_window = data;
-	struct entry *entry = message_window->entry;
-	char *new_text;
-	char text[16];
+	struct message_window *message_window = (struct message_window *) data;
+	Widget entry = widget;
+	KeySym sym;
+	XawTextPosition pos;
+	XawTextBlock buffer;
 
-	if (sym == XKB_KEY_Return || sym == XKB_KEY_KP_Enter)
-		exit (0);
-}
-
-static void
-redraw_handler (struct widget *widget, void *data)
-{
-	struct message_window *message_window = data;
-	int lines_nb;
-	char **lines;
-
-
-	if (message_window->icon) {
-			cairo_set_source_surface (cr, message_window->icon,
-			                              allocation.x + (allocation.width - 64.0)/2,
-			                              allocation.y + 10);
-			cairo_set_operator (cr, CAIRO_OPERATOR_OVER);
-			cairo_paint (cr);
-			cairo_set_source_surface (cr, surface, 0.0, 0.0);
+	if (event->type == KeyPress) {
+		sym = XLookupKeysym (&event->xkey, 0);
+		if (sym == XK_Return || sym == XK_KP_Enter) {
+			XtAppSetExitFlag (message_window->wlmessage->app);
+		} else {
+			 /* prevent a text longer than 20 characters */
+			XtVaGetValues (entry, XtNinsertPosition, &pos, NULL);
+			if (pos > 30) {
+				buffer.firstPos = 0; buffer.length = 1;
+				buffer.ptr = "\n"; buffer.format = FMT8BIT;
+				XawTextReplace (entry, pos-1, pos, &buffer);
+				XtVaSetValues (entry, XtNinsertPosition, 30, NULL);
+			}
+		}
 	}
-
-	g_strfreev (lines);
 }
-#endif
+
  /* ---------------------------------------- */
 
 void
@@ -255,14 +289,14 @@ wlmessage_set_titlebuttons (struct wlmessage *wlmessage, enum wlmessage_titlebut
 
 	struct message_window *message_window = wlmessage->message_window;
 
-	/*message_window->frame_type = FRAME_NONE;
+	message_window->frame_type = _MOTIF_WM_FUNC_MOVE;
 	
 	if (titlebuttons && WLMESSAGE_TITLEBUTTON_MINIMIZE)
-		message_window->frame_type = message_window->frame_type | FRAME_MINIMIZE;
+		message_window->frame_type = message_window->frame_type | _MOTIF_WM_FUNC_MINIMIZE;
 	if (titlebuttons && WLMESSAGE_TITLEBUTTON_MAXIMIZE)
-		message_window->frame_type = message_window->frame_type | FRAME_MAXIMIZE;
+		message_window->frame_type = message_window->frame_type | _MOTIF_WM_FUNC_MAXIMIZE;
 	if (titlebuttons && WLMESSAGE_TITLEBUTTON_CLOSE)
-		message_window->frame_type = message_window->frame_type | FRAME_CLOSE;*/
+		message_window->frame_type = message_window->frame_type | _MOTIF_WM_FUNC_CLOSE;
 }
 
 enum wlmessage_titlebutton
@@ -276,12 +310,12 @@ wlmessage_get_titlebuttons (struct wlmessage *wlmessage)
 
 	titlebuttons = WLMESSAGE_TITLEBUTTON_NONE;
 
-	/*if (message_window->frame_type && FRAME_MINIMIZE)
+	if (message_window->frame_type && _MOTIF_WM_FUNC_MINIMIZE)
 		titlebuttons = titlebuttons | WLMESSAGE_TITLEBUTTON_MINIMIZE;
-	if (message_window->frame_type && FRAME_MAXIMIZE)
+	if (message_window->frame_type && _MOTIF_WM_FUNC_MAXIMIZE)
 		titlebuttons = titlebuttons | WLMESSAGE_TITLEBUTTON_MAXIMIZE;
-	if (message_window->frame_type && FRAME_CLOSE)
-		titlebuttons = titlebuttons | WLMESSAGE_TITLEBUTTON_CLOSE;*/
+	if (message_window->frame_type && _MOTIF_WM_FUNC_CLOSE)
+		titlebuttons = titlebuttons | WLMESSAGE_TITLEBUTTON_CLOSE;
 
 	return titlebuttons;
 }
@@ -407,15 +441,18 @@ wlmessage_add_button (struct wlmessage *wlmessage, unsigned int index, char *cap
 		return;
 
 	struct message_window *message_window = wlmessage->message_window;
-	/*struct button *button;
+	struct button *button;
+
+	if (message_window->buttons_nb == MAX_BUTTONS)
+		return;
 
 	button = xzalloc (sizeof *button);
 	button->caption = strdup (caption);
 	button->value = index;
 	button->message_window = message_window;
 
+	message_window->button_list[message_window->buttons_nb] = button;
 	message_window->buttons_nb++;
-	wl_list_insert (message_window->button_list.prev, &button->link);*/
 }
 
 void
@@ -425,17 +462,18 @@ wlmessage_delete_button (struct wlmessage *wlmessage, unsigned int index)
 		return;
 
 	struct message_window *message_window = wlmessage->message_window;
+	struct button *button;
+	int total, i;
 
-	/*struct button *button, *tmp;
-	wl_list_for_each_safe (button, tmp, &message_window->button_list, link) {
+	total = message_window->buttons_nb;
+	for (i = 0; i < total; i++) {
+		button = message_window->button_list[i];
 		if (button->value == index) {
-			wl_list_remove (&button->link);
-			widget_destroy (button->widget);
 			free (button->caption);
 			free (button);
 			message_window->buttons_nb--;
 		}
-	}*/
+	}
 }
 
 void
@@ -445,12 +483,14 @@ wlmessage_set_default_button (struct wlmessage *wlmessage, unsigned int index)
 		return;
 
 	struct message_window *message_window = wlmessage->message_window;
-	/*struct button *button;
+	struct button *button;
+	int i;
 
-	wl_list_for_each (button, &message_window->button_list, link) {
+	for (i = 0; i < message_window->buttons_nb; i++) {
+		button = message_window->button_list[i];
 		if (button->value == index)
 				wlmessage->return_value = button->value;
-	}*/
+	}
 }
 
 void
@@ -503,8 +543,10 @@ wlmessage_show (struct wlmessage *wlmessage, char **input_text)
 		return 0;
 
 	struct message_window *message_window = wlmessage->message_window;
-	Widget form, label, entry, button;
+	Widget form, label, entry, form_b;
 	XWindowChanges wc;
+	WMHints wm_hints;
+	Atom hintsatom;
 	int extended_width = 0;
 	int lines_nb = 0;
 	int argc_v = 3;
@@ -547,23 +589,33 @@ wlmessage_show (struct wlmessage *wlmessage, char **input_text)
 		                      NULL);
 	}
 
-	 /* add buttons */
-	button = XtCreateManagedWidget ("OK", commandWidgetClass, form, NULL, 0);
-	XtVaSetValues (button, XtVaTypedArg, XtNbackground, XtRString, "light gray", strlen("light gray")+1, NULL);
-	XtVaSetValues (button, XtNhighlightThickness, 0, NULL);
+	 /* add buttons form */
+	form_b = XtCreateManagedWidget ("form_b", formWidgetClass, form, NULL, 0);
+	XtVaSetValues (form_b, XtVaTypedArg, XtNbackground, XtRString, "light slate grey", strlen("light slate grey")+1, NULL);
+	XtVaSetValues (form_b, XtVaTypedArg, XtNborderColor, XtRString, "light slate grey", strlen("light slate grey")+1, NULL);
+	XtVaSetValues (form_b, XtNborderWidth, 0, NULL);
 	if (message_window->textfield)
-		XtVaSetValues (button, XtNfromVert, entry, NULL);
+		XtVaSetValues (form_b, XtNfromVert, entry, NULL);
 	else
-		XtVaSetValues (button, XtNfromVert, label, NULL);
-	XtAddEventHandler (button, ButtonPressMask | ButtonReleaseMask |
-	                           EnterWindowMask | LeaveWindowMask,
-	                           True, bt_on_pointer, NULL);
-	XtAddCallback (button, XtNcallback, bt_on_validate, NULL);
+		XtVaSetValues (form_b, XtNfromVert, label, NULL);
 
-	/*
-	wl_list_for_each (button, &message_window->button_list, link) {
-		button->widget = widget_add_widget (message_window->widget, button);
-	}*/
+	 /* add buttons */
+	struct button *button, *prev_button = NULL;
+	int i;
+	for (i = 0; i < message_window->buttons_nb; i++) {
+		button = message_window->button_list[i];
+		button->button = XtCreateManagedWidget (button->caption, commandWidgetClass, form_b, NULL, 0);
+		XtVaSetValues (button->button, XtVaTypedArg, XtNbackground, XtRString, "light gray", strlen("light gray")+1, NULL);
+		XtVaSetValues (button->button, XtNhighlightThickness, 0, NULL);
+		if (prev_button) {
+			XtVaSetValues (button->button, XtNfromHoriz, prev_button->button, NULL);
+		}
+		XtAddEventHandler (button->button, ButtonPressMask | ButtonReleaseMask |
+	        	                   EnterWindowMask | LeaveWindowMask,
+	                	           True, bt_on_pointer, NULL);
+		XtAddCallback (button->button, XtNcallback, bt_on_validate, button);
+		prev_button = button;
+	}
 
 	 /* global resize handler */
 	extended_width = (get_max_length_of_lines (message_window->message)) - 35;
@@ -574,20 +626,47 @@ wlmessage_show (struct wlmessage *wlmessage, char **input_text)
 	map->icon = message_window->icon;
 	map->label = label;
 	map->entry = entry;
-	map->button = button;
+	map->form_b = form_b;
+	map->button_list = message_window->button_list;
+	map->buttons_nb = message_window->buttons_nb;
 	map->lines_nb = lines_nb;
 	XtAddEventHandler (form, StructureNotifyMask | ExposureMask,
 	                         True, resize_handler, map);
 
-	 /* general actions (title, size,...) */
+	 /* global keyboard handler */
+	XtAddEventHandler (entry, KeyPressMask, True, key_handler, message_window);
+
+	 /* general actions (title, size, decorations...) */
 	XtRealizeWidget (message_window->window);
+
 	XStoreName (wlmessage->display, XtWindow(message_window->window), message_window->title);
+
 	wc.width = 420 + extended_width*10;
 	wc.height = 240 + lines_nb*20; /*+ (!message_window->entry ? 0 : 1)*32
 	                               + (!message_window->buttons_nb ? 0 : 1)*32);*/
 	XConfigureWindow (wlmessage->display, XtWindow(message_window->window), CWWidth | CWHeight, &wc);
 
+	hintsatom = XInternAtom (wlmessage->display, "_MOTIF_WM_HINTS", False);
+	if (hintsatom) {
+		wm_hints.flags = _MOTIF_WM_HINTS_FUNCTIONS;
+		wm_hints.functions = message_window->frame_type;
+		/*wm_hints.decorations = False; *//* disables the border */
+		XChangeProperty (wlmessage->display, XtWindow(message_window->window),
+		                 hintsatom, hintsatom, 32, PropModeReplace,
+		                 (unsigned char *) &wm_hints, 5);
+		/* refresh here ! */
+	}
+
+	 /* main loop */
 	XtAppMainLoop (wlmessage->app);
+
+	if (entry) {
+		XawTextBlock buffer;
+		char *buffer_str;
+
+		XawTextSourceRead (XawTextGetSource(entry), 0, &buffer, 30);
+		*input_text = strdup (g_strstrip(buffer.ptr));
+	}
 
 	return wlmessage->return_value;
 }
@@ -603,13 +682,12 @@ wlmessage_create ()
 
 	wlmessage->message_window = xzalloc (sizeof *wlmessage->message_window);
 	wlmessage->message_window->title = strdup ("wlmessage");
-	//wlmessage->message_window->frame_type = FRAME_ALL;
+	wlmessage->message_window->frame_type = _MOTIF_WM_FUNC_ALL;
 	wlmessage->message_window->resizable = 1;
 	wlmessage->message_window->icon = NULL;
 	wlmessage->message_window->message = NULL;
 	wlmessage->message_window->textfield = NULL;
 	wlmessage->message_window->buttons_nb = 0;
-	//wl_list_init (&wlmessage->message_window->button_list);
 	wlmessage->message_window->wlmessage = wlmessage;
 
 	return wlmessage;
