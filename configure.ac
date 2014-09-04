@@ -34,6 +34,20 @@ AC_SUBST(DLOPEN_LIBS)
 
 AC_CHECK_FUNCS([mkostemp strchrnul initgroups posix_fallocate])
 
+AC_ARG_ENABLE(x11, [  --enable-x11],,
+              enable_x11=no)
+AM_CONDITIONAL(ENABLE_X11, test x$enable_x11 = xyes)
+if test x$enable_x11 = xyes; then
+	platform_libs="$platform_libs x11 xt xaw7"
+fi
+
+AC_ARG_ENABLE(wayland, [  --enable-wayland],,
+              enable_wayland=yes)
+AM_CONDITIONAL(ENABLE_WAYLAND, test x$enable_wayland = xyes)
+if test x$enable_wayland = xyes; then
+	platform_libs="$platform_libs wayland-client wayland-cursor xkbcommon"
+fi
+
 AC_ARG_ENABLE(xdg-shell,
               AS_HELP_STRING([--enable-xdg-shell],
                              [build with XDG-Shell support (Weston 1.5.0)]),
@@ -81,6 +95,10 @@ if test "x$cairo_modules" = "xcairo-glesv2"; then
 AC_DEFINE([USE_CAIRO_GLESV2], [1], [Use the GLESv2 GL cairo backend])
 fi
 
+if test x$enable_wayland = xyes && test x$enable_egl = xyes; then
+	cairo_modules="$cairo_modules wayland-egl"
+fi
+
 PKG_CHECK_MODULES(PIXMAN, [pixman-1])
 PKG_CHECK_MODULES(PNG, [libpng])
 
@@ -94,11 +112,11 @@ AC_SUBST(JPEG_LIBS)
 
 PKG_CHECK_MODULES(GLIB, [glib-2.0 gio-2.0])
 
-PKG_CHECK_MODULES(CLIENT, [wayland-client cairo >= 1.10.0 xkbcommon wayland-cursor])
+PKG_CHECK_MODULES(CLIENT, [$platform_libs cairo >= 1.10.0])
 
   # Only check for cairo-egl if a GL or GLES renderer requested
   AS_IF([test "x$cairo_modules" = "xcairo-glesv2"], [
-    PKG_CHECK_MODULES(CAIRO_EGL, [wayland-egl egl >= 7.10 cairo-egl >= 1.11.3 $cairo_modules],
+    PKG_CHECK_MODULES(CAIRO_EGL, [egl >= 7.10 cairo-egl >= 1.11.3 $cairo_modules],
                       [have_cairo_egl=yes], [have_cairo_egl=no])
     AS_IF([test "x$have_cairo_egl" = "xyes"],
 	  [AC_DEFINE([HAVE_CAIRO_EGL], [1], [Have cairo-egl])],
