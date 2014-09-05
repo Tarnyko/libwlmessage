@@ -58,6 +58,8 @@ struct widget_map {
 	struct button **button_list;
 	int buttons_nb;
 	int lines_nb;
+	int timeout;
+	struct timeval time;
 };
 
  /* ---------------------------------------- */
@@ -185,8 +187,15 @@ resize_handler (Widget widget, XtPointer data, XEvent *event, Boolean *d)
 {
 	Widget form = widget;
 	struct widget_map *map = (struct widget_map *)data;
+	struct timeval cur_time;
 	short width, height;
 	int i;
+
+	if (map->timeout) {
+		gettimeofday (&cur_time, NULL);
+		if ((cur_time.tv_sec - map->time.tv_sec) >= map->timeout)
+			exit (0);
+	}
 
 	if (event->type == ConfigureNotify) {
 		XtConfigureWidget (map->label, (event->xconfigure.width - (event->xconfigure.width-100)) / 2,
@@ -200,12 +209,12 @@ resize_handler (Widget widget, XtPointer data, XEvent *event, Boolean *d)
 			                               event->xconfigure.width - 150,
 			                               20,
 			                               1);
-		XtConfigureWidget (map->form_b, (event->xconfigure.width - (event->xconfigure.width-200)) / 2,
+		XtConfigureWidget (map->form_b, ((event->xconfigure.width-280) / 2) - 10,
 		                                 event->xconfigure.height - 55,
-		                                 event->xconfigure.width - 200, 50,
+		                                 290, 50,
 		                                 1);
 		for (i = 0; i < map->buttons_nb; i++) {
-			XtConfigureWidget (map->button_list[i]->button, ((event->xconfigure.width - 200) /(map->buttons_nb*80)) + i*80 + (i+1)*10,
+			XtConfigureWidget (map->button_list[i]->button, (280-(map->buttons_nb*80))/(map->buttons_nb+1) + i*80 + (i+1)*10,
 		        	                        10,
 			                                80, 30,
 			                                1);
@@ -290,6 +299,8 @@ wlmessage_set_titlebuttons (struct wlmessage *wlmessage, enum wlmessage_titlebut
 	struct message_window *message_window = wlmessage->message_window;
 
 	message_window->frame_type = _MOTIF_WM_FUNC_MOVE;
+	if (message_window->resizable)
+		message_window->frame_type = message_window->frame_type | _MOTIF_WM_FUNC_RESIZE;
 	
 	if (titlebuttons && WLMESSAGE_TITLEBUTTON_MINIMIZE)
 		message_window->frame_type = message_window->frame_type | _MOTIF_WM_FUNC_MINIMIZE;
@@ -545,23 +556,23 @@ wlmessage_show (struct wlmessage *wlmessage, char **input_text)
 	struct message_window *message_window = wlmessage->message_window;
 	Widget form, label, entry, form_b;
 	XWindowChanges wc;
+	XSizeHints sh;
 	WMHints wm_hints;
 	Atom hintsatom;
 	int extended_width = 0;
 	int lines_nb = 0;
 	int argc_v = 3;
 	gchar **argv_v = g_strsplit ("libwlmessage -geometry 320x200", " ", -1);
+	char *p_textfield;
 
 	message_window->window = XtVaAppInitialize (&wlmessage->app, "wlmessage", NULL, 0, &argc_v, argv_v, NULL, NULL);
+	g_strfreev (argv_v);
 
 	wlmessage->display = XtDisplay (message_window->window);
 	if (!wlmessage->display) {
 		fprintf (stderr, "Failed to get X11 display object !\n");
 		return -1;
 	}
-
-	/*if (wlmessage->timeout)
-		display_set_timeout (wlmessage->display, wlmessage->timeout);*/
 
 	 /* add main form */
 	form = XtCreateManagedWidget ("form", formWidgetClass, message_window->window, NULL, 0);
@@ -577,16 +588,20 @@ wlmessage_show (struct wlmessage *wlmessage, char **input_text)
 
 	 /* add entry */
 	if (message_window->textfield) {
+		asprintf (&p_textfield, "%s\n", message_window->textfield);
 		entry = XtCreateManagedWidget ("entry", asciiTextWidgetClass, form, NULL, 0);
-		XtVaSetValues (entry, XtNstring, (String) message_window->textfield,
+		XtVaSetValues (entry, XtNstring, (String) p_textfield,
 		                      XtNeditType, XawtextEdit,
 		                      XtNwrap, XawtextWrapWord,
 		                      XtNautoFill, True,
-		                      XtNleftColumn, 10,
-		                      XtNrightColumn, 20,
+		                      XtNleftColumn, 4,
+		                      XtNrightColumn, 24,
 		                      XtNjustify, XtJustifyCenter,
 		                      XtNfromVert, label,
 		                      NULL);
+		free (p_textfield);
+	} else {
+		entry = 0;
 	}
 
 	 /* add buttons form */
@@ -630,11 +645,14 @@ wlmessage_show (struct wlmessage *wlmessage, char **input_text)
 	map->button_list = message_window->button_list;
 	map->buttons_nb = message_window->buttons_nb;
 	map->lines_nb = lines_nb;
+	map->timeout = wlmessage->timeout;
+	gettimeofday (&map->time, NULL);
 	XtAddEventHandler (form, StructureNotifyMask | ExposureMask,
 	                         True, resize_handler, map);
 
 	 /* global keyboard handler */
-	XtAddEventHandler (entry, KeyPressMask, True, key_handler, message_window);
+	if (entry)
+		XtAddEventHandler (entry, KeyPressMask, True, key_handler, message_window);
 
 	 /* general actions (title, size, decorations...) */
 	XtRealizeWidget (message_window->window);
@@ -645,6 +663,11 @@ wlmessage_show (struct wlmessage *wlmessage, char **input_text)
 	wc.height = 240 + lines_nb*20; /*+ (!message_window->entry ? 0 : 1)*32
 	                               + (!message_window->buttons_nb ? 0 : 1)*32);*/
 	XConfigureWindow (wlmessage->display, XtWindow(message_window->window), CWWidth | CWHeight, &wc);
+
+	sh.flags = PMinSize;
+	sh.min_width = 384;
+	sh.min_height = 200;
+	XSetWMNormalHints (wlmessage->display, XtWindow(message_window->window), &sh);
 
 	hintsatom = XInternAtom (wlmessage->display, "_MOTIF_WM_HINTS", False);
 	if (hintsatom) {
