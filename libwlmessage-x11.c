@@ -530,6 +530,25 @@ wlmessage_get_textfield (struct wlmessage *wlmessage)
 }
 
 void
+wlmessage_set_progress_callback (struct wlmessage *wlmessage, void (*callback) (struct wlmessage *wlmessage, void *data), void *data)
+{
+	/* NOT IMPLEMENTED UNDER X11 YET ! */
+}
+
+void
+wlmessage_set_progress (struct wlmessage *wlmessage, float progress)
+{
+	/* NOT IMPLEMENTED UNDER X11 YET ! */
+}
+
+float
+wlmessage_get_progress (struct wlmessage *wlmessage)
+{
+	/* NOT IMPLEMENTED UNDER X11 YET ! */
+	return -1.0;
+}
+
+void
 wlmessage_set_timeout (struct wlmessage *wlmessage, unsigned int timeout)
 {
 	if (!wlmessage)

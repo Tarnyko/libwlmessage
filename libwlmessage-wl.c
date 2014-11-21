@@ -21,6 +21,7 @@ struct message_window {
 	int frame_type;	/* for titlebuttons */
 	int resizable;
 	cairo_surface_t *icon;
+	struct progressbar *progressbar;
 	struct entry *entry;
 	int buttons_nb;
 	struct wl_list button_list;
@@ -52,10 +53,21 @@ struct entry {
 	struct message_window *message_window;
 };
 
+struct progressbar {
+	struct widget *widget;
+
+	char *text;
+	float progress;
+
+	struct message_window *message_window;
+};
+
 struct wlmessage {
 	struct display *display;
 	struct message_window *message_window;
 	struct wl_text_input_manager *text_input_manager;
+	void (*progress_callback) (struct wlmessage *wlmessage, void *data);
+	void *progress_data;
 	int return_value;
 	int timeout;
 };
@@ -106,6 +118,15 @@ get_lines (char *text)
 	gchar **lines = g_strsplit (text, "\n", -1);
 
 	return lines;
+}
+
+void
+update_window (struct window *window)
+{
+	struct rectangle allocation;
+
+	window_get_allocation (window, &allocation);
+	window_schedule_resize (window, allocation.width, allocation.height);
 }
 
  /* ---------------------------------------- */
@@ -337,6 +358,54 @@ entry_motion_handler(struct widget *widget,
 		float x, float y, void *data)
 {
 	return CURSOR_IBEAM;
+}
+
+static void
+progressbar_redraw_handler (struct widget *widget, void *data)
+{
+	struct progressbar *progressbar = data;
+	struct rectangle allocation;
+	cairo_t *cr;
+	cairo_text_extents_t extents;
+
+	widget_get_allocation (widget, &allocation);
+
+	cr = widget_cairo_create (progressbar->message_window->widget);
+	cairo_set_operator (cr, CAIRO_OPERATOR_SOURCE);
+	cairo_rectangle (cr,
+			allocation.x,
+			allocation.y,
+			allocation.width,
+			allocation.height);
+	cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
+	cairo_fill (cr);
+	cairo_rectangle (cr,
+	                allocation.x,
+	                allocation.y,
+			allocation.width * progressbar->progress,
+			allocation.height);
+	cairo_set_source_rgb (cr, 0.0, 0.0, 1.0);
+	cairo_fill (cr);
+	cairo_set_line_width (cr, 1);
+	cairo_rectangle (cr,
+	                allocation.x,
+	                allocation.y,
+			allocation.width,
+			allocation.height);
+	cairo_set_source_rgb (cr, 0.0, 0.0, 0.0);
+	cairo_stroke_preserve(cr);
+
+	cairo_set_source_rgba (cr, 0.0, 0.0, 0.0, 1.0);
+	cairo_select_font_face (cr, "sans",
+	                        CAIRO_FONT_SLANT_ITALIC,
+	                        CAIRO_FONT_WEIGHT_NORMAL);
+	cairo_set_font_size (cr, 12);
+	cairo_text_extents (cr, progressbar->text, &extents);
+	cairo_move_to (cr, allocation.x + (allocation.width - extents.width)/2,
+		       allocation.y + (allocation.height - extents.height)/2 + 8);
+	cairo_show_text (cr, progressbar->text);
+
+	cairo_destroy (cr);
 }
 
 static void
@@ -603,6 +672,7 @@ static void
 resize_handler (struct widget *widget, int32_t width, int32_t height, void *data)
 {
 	struct message_window *message_window = data;
+	struct progressbar *progressbar;
 	struct entry *entry;
 	struct button *button;
 	struct rectangle allocation;
@@ -612,6 +682,15 @@ resize_handler (struct widget *widget, int32_t width, int32_t height, void *data
 	widget_get_allocation (widget, &allocation);
 
 	x = allocation.x + (width - 240)/2;
+
+	if (message_window->progressbar) {
+		progressbar = message_window->progressbar;
+		widget_set_allocation (progressbar->widget, x - 20, allocation.y + height - 16*2 - 32*2 - 28,
+		                                            280, 24);
+		 /* do not draw the entry and buttons if there is a callback */
+		if (message_window->wlmessage->progress_callback)
+			return;
+	}
 
 	if (message_window->entry) {
 		entry = message_window->entry;
@@ -642,12 +721,20 @@ static void
 redraw_handler (struct widget *widget, void *data)
 {
 	struct message_window *message_window = data;
+	struct wlmessage *wlmessage = message_window->wlmessage;
 	struct rectangle allocation;
 	cairo_surface_t *surface;
 	cairo_t *cr;
 	cairo_text_extents_t extents;
 	int lines_nb;
 	char **lines;
+
+	 /* we launch the callback, and update the window to redraw again */
+	if (wlmessage->progress_callback) {
+		wlmessage->progress_callback (wlmessage,
+		                              wlmessage->progress_data);
+		update_window (message_window->window);
+	}
 
 	widget_get_allocation (message_window->widget, &allocation);
 
@@ -687,6 +774,7 @@ redraw_handler (struct widget *widget, void *data)
 	        	           allocation.y + (allocation.height - lines_nb * extents.height)/2
 		                                + i*(extents.height+10)
 		                                + (!message_window->icon ? 0 : 32)
+                                                - (!message_window->progressbar ? 0 : 24)
                                                 - (!message_window->entry ? 0 : 32)
                                                 - (!message_window->buttons_nb ? 0 : 32));
 		cairo_show_text (cr, lines[i]);
@@ -977,6 +1065,54 @@ wlmessage_get_textfield (struct wlmessage *wlmessage)
 }
 
 void
+wlmessage_set_progress_callback (struct wlmessage *wlmessage, void (*callback) (struct wlmessage *wlmessage, void *data), void *data)
+{
+	if (!wlmessage)
+		return;
+
+	wlmessage->progress_callback = callback;
+	wlmessage->progress_data = data;
+}
+
+void
+wlmessage_set_progress (struct wlmessage *wlmessage, float progress)
+{
+	if (!wlmessage)
+		return;
+	if ((progress < 0.0) || (progress > 1.0))
+		return;
+
+	struct message_window *message_window = wlmessage->message_window;
+	struct progressbar *progressbar;
+
+	if (message_window->progressbar) {
+		progressbar = message_window->progressbar;
+		free (progressbar->text);
+	} else {
+		progressbar = xzalloc (sizeof *progressbar);
+		progressbar->message_window = message_window;
+	}
+	progressbar->text = g_strdup_printf ("%d %%", (int)(progress*100.0));
+	progressbar->progress = progress;
+
+	message_window->progressbar = progressbar;
+}
+
+float
+wlmessage_get_progress (struct wlmessage *wlmessage)
+{
+	if (!wlmessage)
+		return -1.0;
+
+	struct message_window *message_window = wlmessage->message_window;
+
+	if (!message_window->progressbar)
+		return -1.0;
+	else
+		return message_window->progressbar->progress;
+}
+
+void
 wlmessage_set_timeout (struct wlmessage *wlmessage, unsigned int timeout)
 {
 	if (!wlmessage)
@@ -1001,8 +1137,9 @@ wlmessage_show (struct wlmessage *wlmessage, char **input_text)
 		return 0;
 
 	struct message_window *message_window = wlmessage->message_window;
-	struct entry *entry;
-	struct button *button;
+	struct progressbar *progressbar = NULL;
+	struct entry *entry = NULL;
+	struct button *button = NULL;
 	int extended_width = 0;
 	int lines_nb = 0;
 
@@ -1021,6 +1158,13 @@ wlmessage_show (struct wlmessage *wlmessage, char **input_text)
 	                                              message_window->frame_type,
 	                                              message_window->resizable, message_window);
 	window_set_title (message_window->window, message_window->title);
+
+	 /* add progressbar */
+	if (message_window->progressbar) {
+		progressbar = message_window->progressbar;
+		progressbar->widget = widget_add_widget (message_window->widget, progressbar);
+		widget_set_redraw_handler (progressbar->widget, progressbar_redraw_handler);
+	}
 
 	 /* add entry */
 	if (message_window->entry) {
@@ -1043,6 +1187,14 @@ wlmessage_show (struct wlmessage *wlmessage, char **input_text)
 		widget_set_touch_up_handler (button->widget, button_touch_up_handler);
 	}
 
+	 /* do not draw the entry and buttons if there is a callback */
+	if (wlmessage->progress_callback) {
+		if (entry)
+			widget_set_redraw_handler (entry->widget, NULL);
+		wl_list_for_each (button, &message_window->button_list, link)
+			widget_set_redraw_handler (button->widget, NULL);
+	}
+
 	extended_width = (get_max_length_of_lines (message_window->message)) - 35;
 	 if (extended_width < 0) extended_width = 0;
 	lines_nb = get_number_of_lines (message_window->message);
@@ -1055,7 +1207,8 @@ wlmessage_show (struct wlmessage *wlmessage, char **input_text)
 
 	window_schedule_resize (message_window->window,
 	                        480 + extended_width*10,
-	                        280 + lines_nb*16 + (!message_window->entry ? 0 : 1)*32
+	                        280 + lines_nb*24 + (!message_window->progressbar ? 0 : 1)*24
+	                                          + (!message_window->entry ? 0 : 1)*32
 	                                          + (!message_window->buttons_nb ? 0 : 1)*32);
 
 	display_set_user_data (wlmessage->display, wlmessage);
@@ -1075,6 +1228,8 @@ wlmessage_create ()
 	struct wlmessage *wlmessage;
 
 	wlmessage = xzalloc (sizeof *wlmessage);
+	wlmessage->progress_callback = NULL;
+	wlmessage->progress_data = NULL;
 	wlmessage->return_value = 0;
 	wlmessage->timeout = 0;
 
@@ -1084,6 +1239,7 @@ wlmessage_create ()
 	wlmessage->message_window->resizable = 1;
 	wlmessage->message_window->icon = NULL;
 	wlmessage->message_window->message = NULL;
+	wlmessage->message_window->progressbar = NULL;
 	wlmessage->message_window->entry = NULL;
 	wlmessage->message_window->buttons_nb = 0;
 	wl_list_init (&wlmessage->message_window->button_list);
@@ -1097,6 +1253,11 @@ wlmessage_destroy (struct wlmessage *wlmessage)
 {
 	if (!wlmessage)
 		return;
+	if (wlmessage->progress_callback) {
+		wlmessage->progress_callback = NULL;
+		display_exit (wlmessage->display);
+		return;
+	}
 
 	struct message_window *message_window = wlmessage->message_window;
 
