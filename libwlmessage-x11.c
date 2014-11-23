@@ -7,6 +7,7 @@
 #include <glib.h>
 
 #include <X11/Intrinsic.h>
+#include <X11/IntrinsicP.h>
 #include <X11/StringDefs.h>
 #include <X11/Xaw/Form.h>
 #include <X11/Xaw/Label.h>
@@ -21,15 +22,20 @@
 
 struct message_window {
 	Widget window;
+	cairo_surface_t *icon;
+	Widget label;
+	Widget entry;
+	Widget form_b;
+	struct button *button_list[MAX_BUTTONS];
 
 	char *message;
 	char *title;
 	char *textfield;
 	int frame_type;	/* for titlebuttons */
 	int resizable;
-	cairo_surface_t *icon;
 	int buttons_nb;
-	struct button *button_list[MAX_BUTTONS];
+	int lines_nb;
+	struct timeval creat_time;
 
 	struct wlmessage *wlmessage;
 };
@@ -48,18 +54,6 @@ struct wlmessage {
 	struct message_window *message_window;
 	int return_value;
 	int timeout;
-};
-
-struct widget_map {
-	cairo_surface_t *icon;
-	Widget label;
-	Widget entry;
-	Widget form_b;
-	struct button **button_list;
-	int buttons_nb;
-	int lines_nb;
-	int timeout;
-	struct timeval time;
 };
 
  /* ---------------------------------------- */
@@ -146,10 +140,11 @@ void
 bt_on_validate (Widget widget, XtPointer data, XtPointer callback_data)
 {
 	struct button *button = (struct button *) data;
+	struct wlmessage *wlmessage = button->message_window->wlmessage;
 
-	button->message_window->wlmessage->return_value = button->value;
+	wlmessage->return_value = button->value;
 
-	XtAppSetExitFlag (button->message_window->wlmessage->app);
+	XtAppSetExitFlag (wlmessage->app);
 }
 
 static void
@@ -185,52 +180,56 @@ bt_on_pointer (Widget widget, XtPointer data, XEvent *event, Boolean *d)
 static void
 resize_handler (Widget widget, XtPointer data, XEvent *event, Boolean *d)
 {
+	struct message_window *message_window = (struct message_window *) data;
+	struct wlmessage *wlmessage = message_window->wlmessage;
 	Widget form = widget;
-	struct widget_map *map = (struct widget_map *)data;
 	struct timeval cur_time;
 	short width, height;
 	int i;
 
-	if (map->timeout) {
+	if (wlmessage->timeout) {
 		gettimeofday (&cur_time, NULL);
-		if ((cur_time.tv_sec - map->time.tv_sec) >= map->timeout)
+		if ((cur_time.tv_sec - message_window->creat_time.tv_sec) >= wlmessage->timeout)
 			exit (0);
 	}
 
 	if (event->type == ConfigureNotify) {
-		XtConfigureWidget (map->label, (event->xconfigure.width - (event->xconfigure.width-100)) / 2,
-		                               (!map->icon ? 10 : 80),
-		                               event->xconfigure.width - 100,
-		                               map->lines_nb * 20,
-		                               1);
-		if (map->entry)
-			XtConfigureWidget (map->entry, (event->xconfigure.width - (event->xconfigure.width-150)) /2,
-			                               event->xconfigure.height - 80,
-			                               event->xconfigure.width - 150,
-			                               20,
-			                               1);
-		XtConfigureWidget (map->form_b, ((event->xconfigure.width-280) / 2) - 10,
-		                                 event->xconfigure.height - 55,
-		                                 290, 50,
-		                                 1);
-		for (i = 0; i < map->buttons_nb; i++) {
-			XtConfigureWidget (map->button_list[i]->button, (280-(map->buttons_nb*80))/(map->buttons_nb+1) + i*80 + (i+1)*10,
-		        	                        10,
-			                                80, 30,
-			                                1);
+		XtConfigureWidget (message_window->label, (event->xconfigure.width - (event->xconfigure.width-100)) / 2,
+		                                           (!message_window->icon ? 10 : 80),
+		                                           event->xconfigure.width - 100,
+		                                           message_window->lines_nb * 20,
+		                                           1);
+		if (message_window->entry)
+			XtConfigureWidget (message_window->entry, (event->xconfigure.width - (event->xconfigure.width-150)) /2,
+			                                           event->xconfigure.height - 80,
+			                                           event->xconfigure.width - 150,
+			                                           20,
+			                                           1);
+		XtConfigureWidget (message_window->form_b, ((event->xconfigure.width-280) / 2) - 10,
+		                                            event->xconfigure.height - 55,
+		                                            290, 50,
+		                                            1);
+		for (i = 0; i < message_window->buttons_nb; i++) {
+			XtConfigureWidget (message_window->button_list[i]->button,
+			                   (280-(message_window->buttons_nb*80))/(message_window->buttons_nb+1) + i*80 + (i+1)*10,
+			                   10,
+			                   80, 30,
+			                   1);
 		}
 
 		 /* force redraw */
 		event->type = Expose;
 	}
 
-	if (event->type = Expose && map->icon) {
+	if (event->type == Expose && message_window->icon) {
 		XtVaGetValues (form, XtNwidth, &width,
 		                     XtNheight, &height,
 		                     NULL);
-		cairo_surface_t *cs = cairo_xlib_surface_create (XtDisplay(form), XtWindow(form), DefaultVisual(XtDisplay(form), 0), width, height);
+		cairo_surface_t *cs = cairo_xlib_surface_create (XtDisplay(form), XtWindow(form),
+		                                                 DefaultVisual(XtDisplay(form), 0),
+		                                                 width, height);
 		cairo_t *cr = cairo_create (cs);
-		cairo_set_source_surface (cr, map->icon, (width - 64)/2, 10);
+		cairo_set_source_surface (cr, message_window->icon, (width - 64)/2, 10);
 		cairo_paint (cr);
 		cairo_destroy (cr);
 		cairo_surface_destroy (cs);
@@ -372,7 +371,7 @@ wlmessage_set_icon (struct wlmessage *wlmessage, char *icon_path)
 			 /* rescale to 64x64 */
 			int width = cairo_image_surface_get_width (icon);
 			int height = cairo_image_surface_get_height (icon);
-			if (width != height != 64) {
+			if ((width != 64) && (height != 64)) {
 				double ratio = ((64.0/width) < (64.0/height) ? (64.0/width) : (64.0/height));
 				cairo_scale (icon_cr, ratio, ratio);
 			}
@@ -655,19 +654,14 @@ wlmessage_show (struct wlmessage *wlmessage, char **input_text)
 	extended_width = (get_max_length_of_lines (message_window->message)) - 35;
 	 if (extended_width < 0) extended_width = 0;
 	lines_nb = get_number_of_lines (message_window->message);
-
-	struct widget_map *map = xzalloc (sizeof *map);
-	map->icon = message_window->icon;
-	map->label = label;
-	map->entry = entry;
-	map->form_b = form_b;
-	map->button_list = message_window->button_list;
-	map->buttons_nb = message_window->buttons_nb;
-	map->lines_nb = lines_nb;
-	map->timeout = wlmessage->timeout;
-	gettimeofday (&map->time, NULL);
+	 /* */
+	message_window->label = label;
+	message_window->entry = entry;
+	message_window->form_b = form_b;
+	message_window->lines_nb = lines_nb;
+	gettimeofday (&message_window->creat_time, NULL);
 	XtAddEventHandler (form, StructureNotifyMask | ExposureMask,
-	                         True, resize_handler, map);
+	                         True, resize_handler, message_window);
 
 	 /* global keyboard handler */
 	if (entry)
@@ -743,8 +737,6 @@ wlmessage_destroy (struct wlmessage *wlmessage)
 
 	if (message_window->icon)
 		cairo_surface_destroy (message_window->icon);
-	//if (message_window->window)
-	//	window_destroy (message_window->window);
 	if (message_window->title)
 		free (message_window->title);
 	if (message_window->message)

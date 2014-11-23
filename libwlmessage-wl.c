@@ -904,7 +904,7 @@ wlmessage_set_icon (struct wlmessage *wlmessage, char *icon_path)
 			 /* rescale to 64x64 */
 			int width = cairo_image_surface_get_width (icon);
 			int height = cairo_image_surface_get_height (icon);
-			if (width != height != 64) {
+			if ((width != 64) && (height != 64)) {
 				double ratio = ((64.0/width) < (64.0/height) ? (64.0/width) : (64.0/height));
 				cairo_scale (icon_cr, ratio, ratio);
 			}

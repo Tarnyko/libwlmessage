@@ -41,12 +41,12 @@ BuildRequires:  pkgconfig(gio-2.0)
 libwlmessage is a very tiny and toolkit-independent library, able to display interactive dialog boxes under Wayland.
 
 %package devel
-Summary:	Development components for the %{name} package
+Summary:	Development files for %{name}
 Group:		Development/Libraries
 Requires:	%{name} = %{version}
 
 %description devel
-Development files for %{name}
+Development components for the %{name} package
 
 %prep
 %setup -q
