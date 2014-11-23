@@ -31,6 +31,8 @@ struct message_window {
 	char *message;
 	char *title;
 	char *textfield;
+	char *progress_text;
+	float progress;
 	int frame_type;	/* for titlebuttons */
 	int resizable;
 	int buttons_nb;
@@ -52,6 +54,8 @@ struct wlmessage {
 	Display *display;
 	XtAppContext app;
 	struct message_window *message_window;
+	void (*progress_callback) (struct wlmessage *wlmessage, void *data);
+	void *progress_data;
 	int return_value;
 	int timeout;
 };
@@ -183,6 +187,10 @@ resize_handler (Widget widget, XtPointer data, XEvent *event, Boolean *d)
 	struct message_window *message_window = (struct message_window *) data;
 	struct wlmessage *wlmessage = message_window->wlmessage;
 	Widget form = widget;
+	cairo_surface_t *cs;
+	cairo_t *cr;
+	cairo_text_extents_t extents;
+	XEvent xev;
 	struct timeval cur_time;
 	short width, height;
 	int i;
@@ -221,18 +229,61 @@ resize_handler (Widget widget, XtPointer data, XEvent *event, Boolean *d)
 		event->type = Expose;
 	}
 
-	if (event->type == Expose && message_window->icon) {
+	if (event->type == Expose) {
 		XtVaGetValues (form, XtNwidth, &width,
 		                     XtNheight, &height,
 		                     NULL);
-		cairo_surface_t *cs = cairo_xlib_surface_create (XtDisplay(form), XtWindow(form),
-		                                                 DefaultVisual(XtDisplay(form), 0),
-		                                                 width, height);
-		cairo_t *cr = cairo_create (cs);
-		cairo_set_source_surface (cr, message_window->icon, (width - 64)/2, 10);
-		cairo_paint (cr);
-		cairo_destroy (cr);
+		cs = cairo_xlib_surface_create (XtDisplay(form), XtWindow(form),
+		                                DefaultVisual(XtDisplay(form), 0),
+		                                width, height);
+
+		if (message_window->icon) {
+			cr = cairo_create (cs);
+			cairo_set_source_surface (cr, message_window->icon, (width - 64)/2, 10);
+			cairo_paint (cr);
+			cairo_destroy (cr);
+		}
+
+		if (message_window->progress_text) {
+			cr = cairo_create (cs);
+			cairo_set_operator (cr, CAIRO_OPERATOR_SOURCE);
+			cairo_rectangle (cr, (width - (width - 120))/2, height-140,
+			                     width - 120, 16);
+			cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
+			cairo_fill (cr);
+			cairo_rectangle (cr, (width - (width - 120))/2, height-140,
+			                     (width - 120) * message_window->progress, 16);
+			cairo_set_source_rgb (cr, 0.0, 0.0, 1.0);
+			cairo_fill (cr);
+			cairo_set_line_width (cr, 1);
+			cairo_rectangle (cr, (width - (width - 120))/2, height-140,
+			                     width - 120, 16);
+			cairo_set_source_rgb (cr, 0.0, 0.0, 0.0);
+			cairo_stroke_preserve (cr);
+
+			cairo_set_operator (cr, CAIRO_OPERATOR_OVER);
+			cairo_set_source_rgb (cr, 0.0, 0.0, 0.0);
+			cairo_select_font_face (cr, "sans", CAIRO_FONT_SLANT_ITALIC, CAIRO_FONT_WEIGHT_NORMAL);
+			cairo_set_font_size (cr, 10);
+			cairo_text_extents (cr, message_window->progress_text, &extents);
+			cairo_move_to (cr, (width - 120)/2 + (120 - extents.width)/2,
+			                   height-140 + ((16 - extents.height)/2) + 6);
+			cairo_show_text (cr, message_window->progress_text);
+			cairo_destroy (cr);
+		}
+
 		cairo_surface_destroy (cs);
+	}
+
+	 /* we launch the callback, and update the window to redraw again */
+	if (wlmessage->progress_callback) {
+		wlmessage->progress_callback (wlmessage,
+		                              wlmessage->progress_data);
+		memset (&xev, 0, sizeof(xev));
+		xev.type = Expose;
+		xev.xexpose.window = XtWindow(form);
+		XSendEvent (XtDisplay(form), XtWindow(form), False, ExposureMask, &xev);
+		XFlush (XtDisplay(form));
 	}
 }
 
@@ -531,20 +582,42 @@ wlmessage_get_textfield (struct wlmessage *wlmessage)
 void
 wlmessage_set_progress_callback (struct wlmessage *wlmessage, void (*callback) (struct wlmessage *wlmessage, void *data), void *data)
 {
-	/* NOT IMPLEMENTED UNDER X11 YET ! */
+	if (!wlmessage)
+		return;
+
+	wlmessage->progress_callback = callback;
+	wlmessage->progress_data = data;
 }
 
 void
 wlmessage_set_progress (struct wlmessage *wlmessage, float progress)
 {
-	/* NOT IMPLEMENTED UNDER X11 YET ! */
+	if (!wlmessage)
+		return;
+	if ((progress < 0.0) || (progress > 1.0))
+		return;
+
+	struct message_window *message_window = wlmessage->message_window;
+
+	if (message_window->progress_text)
+		free (message_window->progress_text);
+
+	message_window->progress_text = g_strdup_printf ("%d %%", (int)(progress*100.0));
+	message_window->progress = progress;
 }
 
 float
 wlmessage_get_progress (struct wlmessage *wlmessage)
 {
-	/* NOT IMPLEMENTED UNDER X11 YET ! */
-	return -1.0;
+	if (!wlmessage)
+		return -1.0;
+
+	struct message_window *message_window = wlmessage->message_window;
+
+	if (!message_window->progress_text)
+		return -1.0;
+	else
+		return message_window->progress;
 }
 
 void
@@ -604,6 +677,13 @@ wlmessage_show (struct wlmessage *wlmessage, char **input_text)
 	                      XtNborderWidth, 0,
 	                      NULL);
 
+	 /* do not draw the entry and buttons if there is a callback */
+	if (wlmessage->progress_callback) {
+		entry = 0;
+		message_window->buttons_nb = 0;
+		goto form;
+	}
+
 	 /* add entry */
 	if (message_window->textfield) {
 		asprintf (&p_textfield, "%s\n", message_window->textfield);
@@ -622,6 +702,7 @@ wlmessage_show (struct wlmessage *wlmessage, char **input_text)
 		entry = 0;
 	}
 
+form:
 	 /* add buttons form */
 	form_b = XtCreateManagedWidget ("form_b", formWidgetClass, form, NULL, 0);
 	XtVaSetValues (form_b, XtVaTypedArg, XtNbackground, XtRString, "light slate grey", strlen("light slate grey")+1, NULL);
@@ -721,6 +802,8 @@ wlmessage_create ()
 	wlmessage->message_window->icon = NULL;
 	wlmessage->message_window->message = NULL;
 	wlmessage->message_window->textfield = NULL;
+	wlmessage->message_window->progress_text = NULL;
+	wlmessage->message_window->progress = 0.0;
 	wlmessage->message_window->buttons_nb = 0;
 	wlmessage->message_window->wlmessage = wlmessage;
 
@@ -732,6 +815,11 @@ wlmessage_destroy (struct wlmessage *wlmessage)
 {
 	if (!wlmessage)
 		return;
+	if (wlmessage->progress_callback) {
+		wlmessage->progress_callback = NULL;
+		XtAppSetExitFlag (wlmessage->app);
+		return;
+	}
 
 	struct message_window *message_window = wlmessage->message_window;
 
@@ -743,6 +831,8 @@ wlmessage_destroy (struct wlmessage *wlmessage)
 		free (message_window->message);
 	if (message_window->textfield)
 		free (message_window->textfield);
+	if (message_window->progress_text)
+		free (message_window->progress_text);
 	free (message_window);
 
 	free (wlmessage);
