@@ -646,6 +646,7 @@ wlmessage_show (struct wlmessage *wlmessage, char **input_text)
 
 	struct message_window *message_window = wlmessage->message_window;
 	Widget form, label, entry, form_b;
+	XEvent ev;
 	XWindowChanges wc;
 	XSizeHints sh;
 	WMHints wm_hints;
@@ -776,6 +777,11 @@ form:
 
 	 /* main loop */
 	XtAppMainLoop (wlmessage->app);
+
+	 /* last iteration to destroy the window */
+	XtUnrealizeWidget (message_window->window);
+	XtAppNextEvent (wlmessage->app, &ev);
+	XtDispatchEvent (&ev);
 
 	if (entry) {
 		XawTextBlock buffer;
